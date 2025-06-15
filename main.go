@@ -25,6 +25,8 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
+const Version = "0.0.1-dev"
+
 func main() {
 	rootCmd := buildRootCommand()
 
@@ -39,12 +41,24 @@ func main() {
 }
 
 func buildRootCommand() *cobra.Command {
-	server := NewWebhookServer()
-
 	cmd := &cobra.Command{
 		Use:   "pod-webhook-tracker",
 		Short: "A tool to track webhook calls via Kubernetes pods labels",
 		Long:  "This tool allows you to add a label to Kubernetes pods upon webhook call. It can be used to track the number of active jobs in a pod by incrementing or decrementing a label value.",
+	}
+
+	cmd.AddCommand(buildServeCommand())
+	cmd.AddCommand(buildVersionCommend())
+
+	return cmd
+}
+
+func buildServeCommand() *cobra.Command {
+	server := NewWebhookServer()
+
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Run the webhook server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return server.run()
 		},
@@ -54,6 +68,16 @@ func buildRootCommand() *cobra.Command {
 	server.configureLogger()
 
 	return cmd
+}
+
+func buildVersionCommend() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version number",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("v" + Version)
+		},
+	}
 }
 
 type k8sConfig struct {

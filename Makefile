@@ -1,6 +1,7 @@
 PROJECT_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUILD_DIR := $(PROJECT_DIR)/build
 WORKING_DIR := $(PROJECT_DIR)/working
+MODULE_NAME := $(shell go list -m)
 
 # Licensing targets
 LICENSE_DIR = $(BUILD_DIR)/licenses

@@ -1,0 +1,4 @@
+build/*
+working/*
+*.tgz
+*.tar.gz

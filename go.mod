@@ -1,4 +1,4 @@
-module github.com/solidDoWant/pod-job-tracker
+module github.com/solidDoWant/pod-webhook-tracker
 
 go 1.24.3
 

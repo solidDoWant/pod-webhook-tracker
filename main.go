@@ -25,11 +25,6 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-const (
-	activeJobsLabel = "active-jobs"
-)
-
-// TODO limit pods by labels
 func main() {
 	rootCmd := buildRootCommand()
 
@@ -47,9 +42,9 @@ func buildRootCommand() *cobra.Command {
 	server := NewWebhookServer()
 
 	cmd := &cobra.Command{
-		Use:   "pod-job-tracker",
-		Short: "A tool to track job execution in Kubernetes pods",
-		Long:  "This tool allows you to register jobs in Kubernetes pods and track their execution.",
+		Use:   "pod-webhook-tracker",
+		Short: "A tool to track webhook calls via Kubernetes pods labels",
+		Long:  "This tool allows you to add a label to Kubernetes pods upon webhook call. It can be used to track the number of active jobs in a pod by incrementing or decrementing a label value.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return server.run()
 		},
@@ -117,6 +112,9 @@ type webhookServer struct {
 	labelSelector string
 	kubeConfig    *k8sConfig
 	address       string
+	label         string
+	removeOnZero  bool
+	allowNegative bool
 }
 
 func NewWebhookServer() *webhookServer {
@@ -129,6 +127,9 @@ func (ws *webhookServer) configureFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&ws.namespace, "namespace", "default", "The Kubernetes namespace to use for CLI requests.")
 	cmd.Flags().StringVar(&ws.labelSelector, "label-selector", "", "Label selector to use when querying for pods. This should be used to restrict access to specific pods.")
 	cmd.Flags().StringVar(&ws.address, "address", "0.0.0.0:8080", "The address to listen on for incoming webhook requests.")
+	cmd.Flags().StringVar(&ws.label, "label", "active-jobs", "The label to use for tracking webhook calls for a pod. Default is 'active-jobs'.")
+	cmd.Flags().BoolVar(&ws.removeOnZero, "remove-on-zero", true, "If true, the label will be removed when its value reaches zero. If false, the label will be set to zero instead.")
+	cmd.Flags().BoolVar(&ws.allowNegative, "allow-negative", false, "If true, the label value can be negative. If false, the label value will not go below zero.")
 	ws.kubeConfig.configureFlags(cmd)
 }
 
@@ -146,8 +147,8 @@ func (ws *webhookServer) run() error {
 	}
 
 	router := http.NewServeMux()
-	router.HandleFunc("/register-job", ws.buildRegisterJobHandler(clientset))
-	router.HandleFunc("/unregister-job", ws.buildUnregisterJobHandler(clientset))
+	router.HandleFunc("/increment", ws.buildIncrementHandler(clientset))
+	router.HandleFunc("/decrement", ws.buildDecrementHandler(clientset))
 
 	handler := sloghttp.Recovery(router)
 	handler = sloghttp.New(slog.Default().WithGroup("http"))(handler)
@@ -178,25 +179,29 @@ func (ws *webhookServer) run() error {
 	return trace.Wrap(err, "webhook server failed")
 }
 
-func (ws *webhookServer) buildRegisterJobHandler(clientset *kubernetes.Clientset) func(http.ResponseWriter, *http.Request) {
+func (ws *webhookServer) buildIncrementHandler(clientset *kubernetes.Clientset) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ws.updateJobsLabelRequest(w, r, clientset, func(currentValue int) int {
-			// Increment the active jobs count
+		ws.updateLabelRequest(w, r, clientset, func(currentValue int) int {
+			// Increment the label value
 			return currentValue + 1
 		})
 	}
 }
 
-func (ws *webhookServer) buildUnregisterJobHandler(clientset *kubernetes.Clientset) func(http.ResponseWriter, *http.Request) {
+func (ws *webhookServer) buildDecrementHandler(clientset *kubernetes.Clientset) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ws.updateJobsLabelRequest(w, r, clientset, func(currentValue int) int {
-			// Decrement the active jobs count
+		ws.updateLabelRequest(w, r, clientset, func(currentValue int) int {
+			if !ws.allowNegative && currentValue <= 0 {
+				return 0
+			}
+
+			// Decrement the label value
 			return currentValue - 1
 		})
 	}
 }
 
-func (ws *webhookServer) updateJobsLabelRequest(w http.ResponseWriter, r *http.Request, clientset *kubernetes.Clientset, callback func(currentValue int) int) {
+func (ws *webhookServer) updateLabelRequest(w http.ResponseWriter, r *http.Request, clientset *kubernetes.Clientset, callback func(currentValue int) int) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -209,11 +214,11 @@ func (ws *webhookServer) updateJobsLabelRequest(w http.ResponseWriter, r *http.R
 	}
 
 	_ = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		return ws.updateJobsLabel(r.Context(), w, clientset, podName, callback)
+		return ws.updateLabel(r.Context(), w, clientset, podName, callback)
 	})
 }
 
-func (ws *webhookServer) updateJobsLabel(ctx context.Context, w http.ResponseWriter, clientset *kubernetes.Clientset, podName string, callback func(currentValue int) int) error {
+func (ws *webhookServer) updateLabel(ctx context.Context, w http.ResponseWriter, clientset *kubernetes.Clientset, podName string, callback func(currentValue int) int) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
@@ -233,24 +238,24 @@ func (ws *webhookServer) updateJobsLabel(ctx context.Context, w http.ResponseWri
 	}
 	pod := &pods.Items[0]
 
-	activeJobsStr, ok := pod.Labels[activeJobsLabel]
-	activeJobs := 0
+	valueStr, ok := pod.Labels[ws.label]
+	labelValue := 0
 	if ok {
-		activeJobs, err = strconv.Atoi(activeJobsStr)
+		labelValue, err = strconv.Atoi(valueStr)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Invalid active-jobs label value: %q", activeJobsStr), http.StatusInternalServerError)
-			return trace.Wrap(err, "invalid active-jobs label value: %q", activeJobsStr)
+			http.Error(w, fmt.Sprintf("Invalid %q label value: %q", ws.label, valueStr), http.StatusInternalServerError)
+			return trace.Wrap(err, "invalid %q label value: %q", ws.label, valueStr)
 		}
 	}
 
-	newValue := callback(activeJobs)
-	if newValue <= 0 {
-		delete(pod.Labels, activeJobsLabel)
+	newValue := callback(labelValue)
+	if newValue == 0 && ws.removeOnZero {
+		delete(pod.Labels, ws.label)
 	} else {
 		if pod.Labels == nil {
 			pod.Labels = make(map[string]string, 1)
 		}
-		pod.Labels[activeJobsLabel] = strconv.Itoa(newValue)
+		pod.Labels[ws.label] = strconv.Itoa(newValue)
 	}
 
 	_, err = clientset.CoreV1().Pods(pod.Namespace).Update(ctx, pod, metav1.UpdateOptions{})
@@ -259,6 +264,6 @@ func (ws *webhookServer) updateJobsLabel(ctx context.Context, w http.ResponseWri
 		return trace.Wrap(err, "failed to update pod label")
 	}
 
-	fmt.Fprintf(w, "%s label updated to %d for pod %s", activeJobsLabel, activeJobs, podName)
+	fmt.Fprintf(w, "%d", newValue)
 	return nil
 }

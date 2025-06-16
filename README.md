@@ -7,13 +7,16 @@ reaches 0, the label will be removed (configurable), causing pods to not be matc
 
 ## Setup
 
-Run the program in a pod in the Kubernetes cluster. The pod's service account must have access to `get` and `update`
+Run the program in a pod in the Kubernetes cluster. The pod's service account must have access to `list` and `update`
 pods that are running jobs.
 
 Upon job start, the job should send a HTTP POST request to `http://pod-webhook-tracker/increment?pod_name=$(POD_NAME)`,
 replacing `$(POD_NAME)` with the name of the pod that is making the HTTP Request. Upon job completion (regardless of
 success or failure), the pod should make a HTTP POST request to
 `http://pod-webhook-tracker/decrement?pod_name=$(POD_NAME)`.
+
+An example deployment for use with [FileFlows](https://fileflow.com) is available
+[here](https://github.com/solidDoWant/infra-mk3/tree/b5a65f55459f0b5725766e4c879fc6210732330c/cluster/gitops/media/fileflows/job-tracker).
 
 ## Usage
 

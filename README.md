@@ -21,12 +21,32 @@ success or failure), the pod should make a HTTP POST request to
 This tool allows you to add a label to Kubernetes pods upon webhook call. It can be used to track the number of active jobs in a pod by incrementing or decrementing a label value.
 
 Usage:
-  pod-webhook-tracker [flags]
+  pod-webhook-tracker [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  serve       Run the webhook server
+  version     Print the version number
+
+Flags:
+  -h, --help   help for pod-webhook-tracker
+
+Use "pod-webhook-tracker [command] --help" for more information about a command.
+```
+
+### Serve subcommand
+
+```console
+Run the webhook server
+
+Usage:
+  pod-webhook-tracker serve [flags]
 
 Flags:
       --address string                      The address to listen on for incoming webhook requests. (default "0.0.0.0:8080")
       --allow-negative                      If true, the label value can be negative. If false, the label value will not go below zero.
-  -h, --help                                help for pod-webhook-tracker
+  -h, --help                                help for serve
       --kube-as string                      Username to impersonate for the operation
       --kube-as-group stringArray           Group to impersonate for the operation, this flag can be repeated to specify multiple groups.
       --kube-as-uid string                  UID to impersonate for the operation

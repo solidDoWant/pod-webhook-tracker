@@ -12,4 +12,4 @@ COPY "${SOURCE_LICENSE_PATH}" /usr/share/doc/pod-webhook-tracker
 # Configure runtime settings
 USER 1000:1000
 EXPOSE 8080
-ENTRYPOINT [ "/bin/pod-webhook-tracker" ]
+ENTRYPOINT [ "/bin/pod-webhook-tracker", "serve" ]
